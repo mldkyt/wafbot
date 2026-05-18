@@ -30,4 +30,18 @@ follows_table = Table(
     Column("followed", DateTime, nullable=True, server_default="2026-01-28T00:00:00.000Z")
 )
 
+responded_dms = Table(
+    "responded_dms",
+    md_obj,
+    Column("post_id", VARCHAR, primary_key=True)
+)
+
+key_value_store = Table(
+    "kv_store",
+    md_obj,
+    Column("acct", VARCHAR, primary_key=True),
+    Column("setting", VARCHAR, primary_key=True),
+    Column("value", VARCHAR, nullable=False)
+)
+
 md_obj.create_all(engine, checkfirst=True)

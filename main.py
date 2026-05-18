@@ -13,9 +13,9 @@ from aiohttp import ClientSession
 from dotenv import load_dotenv
 from mastodon import Mastodon
 from mastodon.return_types import StatusMention
-from sqlalchemy import select, insert, delete
+from sqlalchemy import select, insert, delete, update
 
-from database import replied_posts, engine, follows_table
+from database import replied_posts, engine, follows_table, key_value_store, responded_dms
 from logger import wafbot_logger
 
 mastodon = Mastodon(access_token="data/pytooter_usercred.secret")
@@ -40,6 +40,37 @@ def get_text(tag: bs4.Tag) -> str:
                 yield child.string
 
     return "".join(_get_text(tag))
+
+def get_setting(acct: str, key: str, default_value: str = None):
+    with engine.begin() as c:
+        res = c.execute(
+            select(key_value_store.c.value)
+            .where((key_value_store.c.acct == acct) & (key_value_store.c.setting == key))
+        ).fetchone()
+
+        if res is not None:
+            return res[0]
+
+    return default_value
+
+def set_setting(acct: str, key: str, value: str):
+    with engine.begin() as c:
+        res = c.execute(
+            select(key_value_store.c.value)
+            .where((key_value_store.c.acct == acct) & (key_value_store.c.setting == key))
+        ).fetchone()
+
+        if res is not None:
+            c.execute(
+                update(key_value_store)
+                .values(value=value)
+                .where((key_value_store.c.acct == acct) & (key_value_store.c.setting == key))
+            )
+        else:
+            c.execute(
+                insert(key_value_store)
+                .values(acct=acct, setting=key, value=value)
+            )
 
 def get_mentions(reply_to: str, mentions: list[StatusMention]):
     mentions = [i for i in mentions if i.acct != me.acct]
@@ -97,12 +128,14 @@ async def reply(debug=False):
                 reply_text = build_reply(get_text(bs4.BeautifulSoup(i.status.content)).lower())
 
                 if len(reply_text.strip()) > 0:
-                    mastodon.status_reblog(i.status.id)
-                    await sleep(0.1)
-                    mastodon.status_post(get_mentions(i.status.account.acct, i.status.mentions) + " " + random.choice(
-                        ["waf", "waff", ":neofox_floof:", ":neofox_pat_floof:", ":neofox_floof_cute:",
-                         ":neofox_floof__w_:", ":neofox_floof_happy:"]), in_reply_to_id=i.status.id, visibility=i.status.visibility)
-                    await sleep(0.1)
+                    if get_setting(i.status.account.acct, "boosting", "false"):
+                        mastodon.status_reblog(i.status.id)
+                        await sleep(0.1)
+                    if get_setting(i.status.account.acct, "replying", "false"):
+                        mastodon.status_post(get_mentions(i.status.account.acct, i.status.mentions) + " " + random.choice(
+                            ["waf", "waff", ":neofox_floof:", ":neofox_pat_floof:", ":neofox_floof_cute:",
+                             ":neofox_floof__w_:", ":neofox_floof_happy:"]), in_reply_to_id=i.status.id, visibility=i.status.visibility)
+                        await sleep(0.1)
                     emoji = random.choice([":neofox_floof:", ":neofox_pat_floof:"])
                     # Reaction
                     requests.put(f"{mastodon.api_base_url}/api/v1/pleroma/statuses/{i.status.id}/reactions/:{emoji}:", headers={
@@ -142,11 +175,13 @@ async def timeline():
                 # Handle replying
                 reply_text = build_reply(get_text(bs4.BeautifulSoup(post.content)).lower())
                 if len(reply_text.strip()) > 0:
-                    mastodon.status_reblog(post.id)
-                    await sleep(0.1)
-                    mastodon.status_post(get_mentions(post.account.acct, post.mentions) + " " + random.choice(
-                        ["waf", "waff", ":neofox_floof:", ":neofox_pat_floof:"]), in_reply_to_id=post.id, visibility=post.visibility)
-                    await sleep(0.1)
+                    if get_setting(post.account.acct, "boosting", "false"):
+                        mastodon.status_reblog(post.id)
+                        await sleep(0.1)
+                    if get_setting(post.account.acct, "replying", "false"):
+                        mastodon.status_post(get_mentions(post.account.acct, post.mentions) + " " + random.choice(
+                            ["waf", "waff", ":neofox_floof:", ":neofox_pat_floof:"]), in_reply_to_id=post.id, visibility=post.visibility)
+                        await sleep(0.1)
                     emoji = random.choice([":neofox_floof:", ":neofox_pat_floof:"])
                     requests.put(f"{mastodon.api_base_url}/api/v1/pleroma/statuses/{post.id}/reactions/:{emoji}:", headers={
                         "Authorization": f"Bearer {mastodon.access_token}"
@@ -227,6 +262,89 @@ async def check_followers():
             wafbot_logger.exception("error in check_followers")
             break
 
+async def respond_dm():
+    await sleep(0.1)
+
+    while True:
+        for i in mastodon.notifications():
+            if i.type != "mention":
+                continue
+            if i.status is None:
+                continue
+            if i.status.visibility != "direct":
+                continue
+
+            with engine.begin() as c:
+                if c.execute(
+                    select(responded_dms)
+                    .where(responded_dms.c.post_id == i.status.id)
+                ).fetchone() is not None:
+                    continue
+
+            text = get_text(bs4.BeautifulSoup(i.status.content)).strip()
+
+            if not text.startswith(f"@{me.acct}"):
+                continue
+
+            params = text.split(" ")
+            if len(params) == 1:
+                mastodon.status_post(f"Please give me a command! Do `@{me.acct} help` in order to get a list.", in_reply_to_id=i.status.id, visibility="direct")
+                continue
+
+            if params[1].startswith("@"):
+                del params[1]
+
+            if len(params) == 1:
+                mastodon.status_post(f"Please give me a command! Do `@{me.acct} help` in order to get a list.",
+                                     in_reply_to_id=i.status.id, visibility="direct")
+                continue
+            elif len(params) == 2:
+                if params[1] == "help":
+                    mastodon.status_post(f"""@{i.account.acct} Help for wafbot
+- `enable boosting` or `disable boosting` - Enable the behaviour of the bot boosting your post.
+- `enable replying` or `disable replying` - Enable or disable the behaviour of the bot replying to posts.
+- `get` - List current settings""", in_reply_to_id=i.status.id, visibility="direct")
+                elif params[1] == "get":
+                    enable_replies = get_setting(i.account.acct, "replying", "false")
+                    enable_boosts = get_setting(i.account.acct, "boosting", "false")
+                    mastodon.status_post(f"""@{i.account.acct} Your current settings:
+- Enable boosting: {'yes' if enable_boosts else 'no'}
+- Enable replying: {'yes' if enable_replies else 'no'}""", in_reply_to_id=i.status.id, visibility="direct")
+                else:
+                    mastodon.status_post(f"@{i.account.acct} Unknown command", in_reply_to_id=i.status.id, visibility="direct")
+            elif len(params) == 3:
+                if params[1] == "enable":
+                    if params[2] == "boosting":
+                        set_setting(i.status.account.acct, "boosting", "true")
+                        mastodon.status_post(f"@{i.account.acct} Boosting is now enabled", in_reply_to_id=i.status.id,
+                                             visibility="direct")
+                    elif params[2] == "replying":
+                        set_setting(i.status.account.acct, "replying", "true")
+                        mastodon.status_post(f"@{i.account.acct} Replying is now enabled", in_reply_to_id=i.status.id,
+                                             visibility="direct")
+                    else:
+                        mastodon.status_post(f"@{i.account.acct} Unknown command", in_reply_to_id=i.status.id, visibility="direct")
+                elif params[1] == "disable":
+                    if params[2] == "boosting":
+                        set_setting(i.status.account.acct, "boosting", "false")
+                        mastodon.status_post(f"@{i.account.acct} Boosting is now disabled", in_reply_to_id=i.status.id,
+                                             visibility="direct")
+                    elif params[2] == "replying":
+                        set_setting(i.status.account.acct, "replying", "false")
+                        mastodon.status_post(f"@{i.account.acct} Replying is now disabled", in_reply_to_id=i.status.id,
+                                             visibility="direct")
+                    else:
+                        mastodon.status_post(f"@{i.account.acct} Unknown command", in_reply_to_id=i.status.id,
+                                             visibility="direct")
+
+            with engine.begin() as c:
+                c.execute(
+                    insert(responded_dms)
+                    .values(post_id=i.status.id)
+                )
+
+        await asyncio.sleep(10)
+
 
 async def status():
     HEARTBEAT_URL = getenv("HEARTBEAT_URL", "")
@@ -249,7 +367,8 @@ async def wafin():
         reply(),
         timeline(),
         check_followers(),
-        status()
+        status(),
+        respond_dm()
     )
 
 
