@@ -78,7 +78,7 @@ def get_mentions(reply_to: str, mentions: list[StatusMention]):
 
 def post_waf():
 
-    mastodon.toot(random.choice(["waf", "waff", ":neofox_floof:", ":neofox_pat_floof:", ":neofox_floof_cute:", ":neofox_floof__w_:", ":neofox_floof_happy:"]))
+    mastodon.status_post(random.choice(["waf", "waff", ":neofox_floof:", ":neofox_pat_floof:", ":neofox_floof_cute:", ":neofox_floof__w_:", ":neofox_floof_happy:"]), visibility="unlisted")
 
 async def waf():
     while True:
@@ -134,7 +134,7 @@ async def reply(debug=False):
                     if get_setting(i.status.account.acct, "replying", "false"):
                         mastodon.status_post(get_mentions(i.status.account.acct, i.status.mentions) + " " + random.choice(
                             ["waf", "waff", ":neofox_floof:", ":neofox_pat_floof:", ":neofox_floof_cute:",
-                             ":neofox_floof__w_:", ":neofox_floof_happy:"]), in_reply_to_id=i.status.id, visibility=i.status.visibility)
+                             ":neofox_floof__w_:", ":neofox_floof_happy:"]), in_reply_to_id=i.status.id, visibility="unlisted" if i.status.visibility == "public" else i.status.visibility)
                         await sleep(0.1)
                     emoji = random.choice([":neofox_floof:", ":neofox_pat_floof:"])
                     # Reaction
@@ -180,7 +180,7 @@ async def timeline():
                         await sleep(0.1)
                     if get_setting(post.account.acct, "replying", "false"):
                         mastodon.status_post(get_mentions(post.account.acct, post.mentions) + " " + random.choice(
-                            ["waf", "waff", ":neofox_floof:", ":neofox_pat_floof:"]), in_reply_to_id=post.id, visibility=post.visibility)
+                            ["waf", "waff", ":neofox_floof:", ":neofox_pat_floof:"]), in_reply_to_id=post.id, visibility=post.visibility if post.visibility != "public" else "unlisted")
                         await sleep(0.1)
                     emoji = random.choice([":neofox_floof:", ":neofox_pat_floof:"])
                     requests.put(f"{mastodon.api_base_url}/api/v1/pleroma/statuses/{post.id}/reactions/:{emoji}:", headers={
