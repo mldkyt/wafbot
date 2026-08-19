@@ -2,12 +2,11 @@ import asyncio
 import datetime
 import random
 import re
-import typing
 from asyncio import sleep
 from os import getenv
 from random import randint
 
-import bs4
+import html2text
 import requests
 from aiohttp import ClientSession
 from dotenv import load_dotenv
@@ -26,47 +25,6 @@ from logger import wafbot_logger
 
 mastodon = Mastodon(access_token="data/pytooter_usercred.secret")
 me = mastodon.me()
-
-
-# borrowed from https://stackoverflow.com/questions/30337528/make-beautifulsoup-handle-line-breaks-as-a-browser-would
-def get_text(tag: bs4.Tag) -> str:
-    _inline_elements = {
-        "a",
-        "span",
-        "em",
-        "strong",
-        "u",
-        "i",
-        "font",
-        "mark",
-        "label",
-        "s",
-        "sub",
-        "sup",
-        "tt",
-        "bdo",
-        "button",
-        "cite",
-        "del",
-        "b",
-        "a",
-        "font",
-    }
-
-    def _get_text(tag: bs4.Tag) -> typing.Generator:
-        for child in tag.children:
-            if isinstance(child, bs4.Tag):
-                # if the tag is a block type tag then yield new lines before after
-                is_block_element = child.name not in _inline_elements
-                if is_block_element:
-                    yield "\n"
-                yield from ["\n"] if child.name == "br" else _get_text(child)
-                if is_block_element:
-                    yield "\n"
-            elif isinstance(child, bs4.NavigableString):
-                yield child.string
-
-    return "".join(_get_text(tag))
 
 
 def get_setting(acct: str, key: str, default_value: str = None):
@@ -173,7 +131,7 @@ async def reply(debug=False):
                     if (
                         c.execute(
                             select(replied_posts).where(
-                                (replied_posts.c.id == str(i.status.id))
+                                replied_posts.c.id == str(i.status.id)
                             )
                         ).fetchone()
                         is not None
@@ -181,9 +139,7 @@ async def reply(debug=False):
                         continue
 
                 # Handle replying
-                reply_text = build_reply(
-                    get_text(bs4.BeautifulSoup(i.status.content)).lower()
-                )
+                reply_text = build_reply(html2text.html2text(i.status.content).lower())
 
                 if len(reply_text.strip()) > 0:
                     if get_setting(i.status.account.acct, "boosting", "false"):
@@ -252,7 +208,7 @@ async def timeline():
                     if (
                         c.execute(
                             select(replied_posts).where(
-                                (replied_posts.c.id == str(post.id))
+                                replied_posts.c.id == str(post.id)
                             )
                         ).fetchone()
                         is not None
@@ -260,9 +216,7 @@ async def timeline():
                         continue
 
                 # Handle replying
-                reply_text = build_reply(
-                    get_text(bs4.BeautifulSoup(post.content)).lower()
-                )
+                reply_text = build_reply(html2text.html2text(post.content).lower())
                 if len(reply_text.strip()) > 0:
                     if get_setting(post.account.acct, "boosting", "false"):
                         mastodon.status_reblog(
@@ -361,14 +315,13 @@ async def check_followers():
                             with engine.begin() as c:
                                 c.execute(
                                     delete(follows_table).where(
-                                        (follows_table.c.id == i[0])
+                                        follows_table.c.id == i[0]
                                     )
                                 )
 
                         await asyncio.sleep(1)
                     except Exception as e:
-                        print(f"failed to unfollow {i[0]}: {str(e)}")
-                        pass
+                        print(f"failed to unfollow {i[0]}: {e!s}")
 
             await asyncio.sleep(180)
         except Exception:
@@ -399,7 +352,7 @@ async def respond_dm():
                 ):
                     continue
 
-            text = get_text(bs4.BeautifulSoup(i.status.content)).strip()
+            text = html2text.html2text(i.status.content).strip()
 
             if not text.startswith(f"@{me.acct}"):
                 continue
@@ -417,7 +370,7 @@ async def respond_dm():
 
                 if len(params) == 1:
                     if params[0] == "help":
-                        reply += f"""Help for wafbot\n
+                        reply += """Help for wafbot\n
     - `enable boosting` or `disable boosting` - Enable the behaviour of the bot boosting your post.
     - `enable replying` or `disable replying` - Enable or disable the behaviour of the bot replying to posts.
     - `get` - List current settings\n\n"""
@@ -435,17 +388,17 @@ async def respond_dm():
                     if params[0] == "enable":
                         if params[1] == "boosting":
                             set_setting(i.status.account.acct, "boosting", "true")
-                            reply += f"Boosting is now enabled\n\n"
+                            reply += "Boosting is now enabled\n\n"
                         elif params[1] == "replying":
                             set_setting(i.status.account.acct, "replying", "true")
-                            reply += f"Replying is now enabled\n\n"
+                            reply += "Replying is now enabled\n\n"
                     elif params[0] == "disable":
                         if params[1] == "boosting":
                             set_setting(i.status.account.acct, "boosting", "false")
-                            reply += f"Boosting is now disabled\n\n"
+                            reply += "Boosting is now disabled\n\n"
                         elif params[1] == "replying":
                             set_setting(i.status.account.acct, "replying", "false")
-                            reply += f"Replying is now disabled\n\n"
+                            reply += "Replying is now disabled\n\n"
 
             if len(reply.strip()) == 0:
                 reply += "Unrecognized command. Please try using `help` to get help"
