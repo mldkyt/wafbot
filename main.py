@@ -13,18 +13,45 @@ from aiohttp import ClientSession
 from dotenv import load_dotenv
 from mastodon import Mastodon
 from mastodon.return_types import StatusMention
-from sqlalchemy import select, insert, delete, update
+from sqlalchemy import delete, insert, select, update
 
-from database import replied_posts, engine, follows_table, key_value_store, responded_dms
+from database import (
+    engine,
+    follows_table,
+    key_value_store,
+    replied_posts,
+    responded_dms,
+)
 from logger import wafbot_logger
 
 mastodon = Mastodon(access_token="data/pytooter_usercred.secret")
 me = mastodon.me()
 
+
 # borrowed from https://stackoverflow.com/questions/30337528/make-beautifulsoup-handle-line-breaks-as-a-browser-would
 def get_text(tag: bs4.Tag) -> str:
-    _inline_elements = {"a","span","em","strong","u","i","font","mark","label",
-    "s","sub","sup","tt","bdo","button","cite","del","b","a","font",}
+    _inline_elements = {
+        "a",
+        "span",
+        "em",
+        "strong",
+        "u",
+        "i",
+        "font",
+        "mark",
+        "label",
+        "s",
+        "sub",
+        "sup",
+        "tt",
+        "bdo",
+        "button",
+        "cite",
+        "del",
+        "b",
+        "a",
+        "font",
+    }
 
     def _get_text(tag: bs4.Tag) -> typing.Generator:
         for child in tag.children:
@@ -41,11 +68,13 @@ def get_text(tag: bs4.Tag) -> str:
 
     return "".join(_get_text(tag))
 
+
 def get_setting(acct: str, key: str, default_value: str = None):
     with engine.begin() as c:
         res = c.execute(
-            select(key_value_store.c.value)
-            .where((key_value_store.c.acct == acct) & (key_value_store.c.setting == key))
+            select(key_value_store.c.value).where(
+                (key_value_store.c.acct == acct) & (key_value_store.c.setting == key)
+            )
         ).fetchone()
 
         if res is not None:
@@ -53,36 +82,55 @@ def get_setting(acct: str, key: str, default_value: str = None):
 
     return default_value
 
+
 def set_setting(acct: str, key: str, value: str):
     with engine.begin() as c:
         res = c.execute(
-            select(key_value_store.c.value)
-            .where((key_value_store.c.acct == acct) & (key_value_store.c.setting == key))
+            select(key_value_store.c.value).where(
+                (key_value_store.c.acct == acct) & (key_value_store.c.setting == key)
+            )
         ).fetchone()
 
         if res is not None:
             c.execute(
                 update(key_value_store)
                 .values(value=value)
-                .where((key_value_store.c.acct == acct) & (key_value_store.c.setting == key))
+                .where(
+                    (key_value_store.c.acct == acct)
+                    & (key_value_store.c.setting == key)
+                )
             )
         else:
             c.execute(
-                insert(key_value_store)
-                .values(acct=acct, setting=key, value=value)
+                insert(key_value_store).values(acct=acct, setting=key, value=value)
             )
+
 
 def get_mentions(reply_to: str, mentions: list[StatusMention]):
     mentions = [i for i in mentions if i.acct != me.acct]
     return f"@{reply_to} " + " ".join([f"@{j.acct}" for j in mentions])
 
+
 def post_waf():
 
-    mastodon.status_post(random.choice(["waf", "waff", ":neofox_floof:", ":neofox_pat_floof:", ":neofox_floof_cute:", ":neofox_floof__w_:", ":neofox_floof_happy:"]), visibility="unlisted")
+    mastodon.status_post(
+        random.choice(
+            [
+                "waf",
+                "waff",
+                ":neofox_floof:",
+                ":neofox_pat_floof:",
+                ":neofox_floof_cute:",
+                ":neofox_floof__w_:",
+                ":neofox_floof_happy:",
+            ]
+        ),
+        visibility="unlisted",
+    )
+
 
 async def waf():
     while True:
-
         try:
             a = randint(0, 100)
             if a == 67:
@@ -92,6 +140,7 @@ async def waf():
         except Exception:
             wafbot_logger.exception("exception in waf")
             break
+
 
 def build_reply(text: str) -> str:
     reply = []
@@ -103,6 +152,7 @@ def build_reply(text: str) -> str:
             reply.append(random.choice([":neofox_floof:", ":neofox_pat_floof:"]))
 
     return " ".join(reply)
+
 
 async def reply(debug=False):
     while True:
@@ -120,27 +170,57 @@ async def reply(debug=False):
 
                 # Check reply state
                 with engine.begin() as c:
-                    if (c.execute(select(replied_posts).where(
-                            (replied_posts.c.id == str(i.status.id)))).fetchone() is not None):
+                    if (
+                        c.execute(
+                            select(replied_posts).where(
+                                (replied_posts.c.id == str(i.status.id))
+                            )
+                        ).fetchone()
+                        is not None
+                    ):
                         continue
 
                 # Handle replying
-                reply_text = build_reply(get_text(bs4.BeautifulSoup(i.status.content)).lower())
+                reply_text = build_reply(
+                    get_text(bs4.BeautifulSoup(i.status.content)).lower()
+                )
 
                 if len(reply_text.strip()) > 0:
                     if get_setting(i.status.account.acct, "boosting", "false"):
-                        mastodon.status_reblog(i.status.id)
+                        mastodon.status_reblog(
+                            i.status.id,
+                            visibility=i.status.visibility
+                            if i.status.visibility != "public"
+                            else "unlisted",
+                        )
                         await sleep(0.1)
                     if get_setting(i.status.account.acct, "replying", "false"):
-                        mastodon.status_post(get_mentions(i.status.account.acct, i.status.mentions) + " " + random.choice(
-                            ["waf", "waff", ":neofox_floof:", ":neofox_pat_floof:", ":neofox_floof_cute:",
-                             ":neofox_floof__w_:", ":neofox_floof_happy:"]), in_reply_to_id=i.status.id, visibility="unlisted" if i.status.visibility == "public" else i.status.visibility)
+                        mastodon.status_post(
+                            get_mentions(i.status.account.acct, i.status.mentions)
+                            + " "
+                            + random.choice(
+                                [
+                                    "waf",
+                                    "waff",
+                                    ":neofox_floof:",
+                                    ":neofox_pat_floof:",
+                                    ":neofox_floof_cute:",
+                                    ":neofox_floof__w_:",
+                                    ":neofox_floof_happy:",
+                                ]
+                            ),
+                            in_reply_to_id=i.status.id,
+                            visibility="unlisted"
+                            if i.status.visibility == "public"
+                            else i.status.visibility,
+                        )
                         await sleep(0.1)
                     emoji = random.choice([":neofox_floof:", ":neofox_pat_floof:"])
                     # Reaction
-                    requests.put(f"{mastodon.api_base_url}/api/v1/pleroma/statuses/{i.status.id}/reactions/:{emoji}:", headers={
-                        "Authorization": f"Bearer {mastodon.access_token}"
-                    })
+                    requests.put(
+                        f"{mastodon.api_base_url}/api/v1/pleroma/statuses/{i.status.id}/reactions/:{emoji}:",
+                        headers={"Authorization": f"Bearer {mastodon.access_token}"},
+                    )
                     await sleep(0.1)
 
                     with engine.begin() as c:
@@ -152,6 +232,7 @@ async def reply(debug=False):
         except Exception:
             wafbot_logger.exception("exception in reply")
             break
+
 
 async def timeline():
     while True:
@@ -168,24 +249,47 @@ async def timeline():
 
                 # Check reply state
                 with engine.begin() as c:
-                    if (c.execute(select(replied_posts).where(
-                            (replied_posts.c.id == str(post.id)))).fetchone() is not None):
+                    if (
+                        c.execute(
+                            select(replied_posts).where(
+                                (replied_posts.c.id == str(post.id))
+                            )
+                        ).fetchone()
+                        is not None
+                    ):
                         continue
 
                 # Handle replying
-                reply_text = build_reply(get_text(bs4.BeautifulSoup(post.content)).lower())
+                reply_text = build_reply(
+                    get_text(bs4.BeautifulSoup(post.content)).lower()
+                )
                 if len(reply_text.strip()) > 0:
                     if get_setting(post.account.acct, "boosting", "false"):
-                        mastodon.status_reblog(post.id)
+                        mastodon.status_reblog(
+                            post.id,
+                            visibility=post.visibility
+                            if post.visibility != "public"
+                            else "unlisted",
+                        )
                         await sleep(0.1)
                     if get_setting(post.account.acct, "replying", "false"):
-                        mastodon.status_post(get_mentions(post.account.acct, post.mentions) + " " + random.choice(
-                            ["waf", "waff", ":neofox_floof:", ":neofox_pat_floof:"]), in_reply_to_id=post.id, visibility=post.visibility if post.visibility != "public" else "unlisted")
+                        mastodon.status_post(
+                            get_mentions(post.account.acct, post.mentions)
+                            + " "
+                            + random.choice(
+                                ["waf", "waff", ":neofox_floof:", ":neofox_pat_floof:"]
+                            ),
+                            in_reply_to_id=post.id,
+                            visibility=post.visibility
+                            if post.visibility != "public"
+                            else "unlisted",
+                        )
                         await sleep(0.1)
                     emoji = random.choice([":neofox_floof:", ":neofox_pat_floof:"])
-                    requests.put(f"{mastodon.api_base_url}/api/v1/pleroma/statuses/{post.id}/reactions/:{emoji}:", headers={
-                        "Authorization": f"Bearer {mastodon.access_token}"
-                    })
+                    requests.put(
+                        f"{mastodon.api_base_url}/api/v1/pleroma/statuses/{post.id}/reactions/:{emoji}:",
+                        headers={"Authorization": f"Bearer {mastodon.access_token}"},
+                    )
                     await sleep(0.1)
 
                     with engine.begin() as c:
@@ -200,16 +304,15 @@ async def timeline():
             wafbot_logger.exception("exception in timeline")
             break
 
+
 async def check_followers():
     while True:
-        
         try:
             for i in mastodon.account_followers(me):
                 try:
                     with engine.begin() as c:
                         a = c.execute(
-                            select(follows_table)
-                            .where(follows_table.c.id == i.id)
+                            select(follows_table).where(follows_table.c.id == i.id)
                         ).fetchone()
 
                     if a is not None:
@@ -219,16 +322,22 @@ async def check_followers():
                     if len(rel) == 0:
                         continue
 
-                    if not rel[0].following and not rel[0].requested_by and not rel[0].blocked_by:
+                    if (
+                        not rel[0].following
+                        and not rel[0].requested_by
+                        and not rel[0].blocked_by
+                    ):
                         print(f"follow {i.acct}")
                         while True:
                             follow = mastodon.account_follow(i.id)
                             if follow:
                                 with engine.begin() as c:
-                                    c.execute(insert(follows_table).values(
-                                        id=i.id,
-                                        acct=i.acct,
-                                        followed=datetime.datetime.now())
+                                    c.execute(
+                                        insert(follows_table).values(
+                                            id=i.id,
+                                            acct=i.acct,
+                                            followed=datetime.datetime.now(),
+                                        )
                                     )
                                 break
                             await asyncio.sleep(4)
@@ -250,7 +359,11 @@ async def check_followers():
                         unfollow_ok = mastodon.account_unfollow(i[0])
                         if unfollow_ok:
                             with engine.begin() as c:
-                                c.execute(delete(follows_table).where((follows_table.c.id == i[0])))
+                                c.execute(
+                                    delete(follows_table).where(
+                                        (follows_table.c.id == i[0])
+                                    )
+                                )
 
                         await asyncio.sleep(1)
                     except Exception as e:
@@ -261,6 +374,7 @@ async def check_followers():
         except Exception:
             wafbot_logger.exception("error in check_followers")
             break
+
 
 async def respond_dm():
     await sleep(0.1)
@@ -275,10 +389,14 @@ async def respond_dm():
                 continue
 
             with engine.begin() as c:
-                if c.execute(
-                    select(responded_dms)
-                    .where(responded_dms.c.post_id == i.status.id)
-                ).fetchone() is not None:
+                if (
+                    c.execute(
+                        select(responded_dms).where(
+                            responded_dms.c.post_id == i.status.id
+                        )
+                    ).fetchone()
+                    is not None
+                ):
                     continue
 
             text = get_text(bs4.BeautifulSoup(i.status.content)).strip()
@@ -304,11 +422,13 @@ async def respond_dm():
     - `enable replying` or `disable replying` - Enable or disable the behaviour of the bot replying to posts.
     - `get` - List current settings\n\n"""
                     elif params[0] == "get":
-                        enable_replies = get_setting(i.account.acct, "replying", "false")
+                        enable_replies = get_setting(
+                            i.account.acct, "replying", "false"
+                        )
                         enable_boosts = get_setting(i.account.acct, "boosting", "false")
                         reply += f"""Your current settings:\n
-    - Enable boosting: {'yes' if enable_boosts else 'no'}
-    - Enable replying: {'yes' if enable_replies else 'no'}\n\n"""
+    - Enable boosting: {"yes" if enable_boosts else "no"}
+    - Enable replying: {"yes" if enable_replies else "no"}\n\n"""
                     elif params[0] == "waf":
                         reply += "waf\n\n"
                 elif len(params) == 2:
@@ -330,13 +450,15 @@ async def respond_dm():
             if len(reply.strip()) == 0:
                 reply += "Unrecognized command. Please try using `help` to get help"
 
-            mastodon.status_post(f"@{i.account.acct} {reply}", content_type="text/plain", visibility='direct', in_reply_to_id=i.status)
+            mastodon.status_post(
+                f"@{i.account.acct} {reply}",
+                content_type="text/plain",
+                visibility="direct",
+                in_reply_to_id=i.status,
+            )
 
             with engine.begin() as c:
-                c.execute(
-                    insert(responded_dms)
-                    .values(post_id=i.status.id)
-                )
+                c.execute(insert(responded_dms).values(post_id=i.status.id))
 
         await asyncio.sleep(10)
 
@@ -358,16 +480,10 @@ async def status():
 async def wafin():
 
     await asyncio.gather(
-        waf(),
-        reply(),
-        timeline(),
-        check_followers(),
-        status(),
-        respond_dm()
+        waf(), reply(), timeline(), check_followers(), status(), respond_dm()
     )
 
 
-if __name__ == '__main__':
-
+if __name__ == "__main__":
     load_dotenv()
     asyncio.run(wafin())
