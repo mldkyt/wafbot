@@ -430,10 +430,24 @@ async def status():
         await asyncio.sleep(60)
 
 
+async def run_task(task, name: str):
+    while True:
+        try:
+            await task()
+        except Exception:
+            wafbot_logger.exception(f"exception in {name}")
+            await asyncio.sleep(5)
+
+
 async def wafin():
 
     await asyncio.gather(
-        waf(), reply(), timeline(), check_followers(), status(), respond_dm()
+        run_task(waf, "waf"),
+        run_task(reply, "reply"),
+        run_task(timeline, "timeline"),
+        run_task(check_followers, "check_followers"),
+        run_task(status, "status"),
+        run_task(respond_dm, "respond_dm")
     )
 
 
